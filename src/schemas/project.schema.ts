@@ -23,6 +23,10 @@ export class Project {
   @Prop({ type: Number, required: true, default: 0 })
   mark: number;
 
+  /** الطالب الذي أنشأ المشروع (UML: Student → Create Projects). */
+  @Prop({ type: Types.ObjectId, ref: 'Student', default: null })
+  createdByStudent: Types.ObjectId | null;
+
   /**
    * First supervisor (same as supervisors[0] when seeded from CSV).
    * Kept for simple lookups; prefer supervisors when there are co-supervisors.
@@ -36,6 +40,17 @@ export class Project {
   /** Raw cell from CSV before splitting on `_`. */
   @Prop({ trim: true })
   supervisorDisplayName?: string;
+
+  /** مشاريع الفرق: قبول طلبات انضمام طلاب جدد (يغلقها قائد الفريق عند اكتمال العدد). */
+  @Prop({ type: Boolean, required: true, default: true })
+  enrollmentOpen: boolean;
+
+  /**
+   * أقصى عدد طلاب مسجّلين على المشروع (بما فيه المنشئ).
+   * null = بلا سقف عددي (ما دام enrollmentOpen).
+   */
+  @Prop({ type: Number, required: false, default: null })
+  maxTeamMembers: number | null;
 }
 
 export const ProjectSchema = SchemaFactory.createForClass(Project);

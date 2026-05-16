@@ -10,6 +10,7 @@ import { hashPassword } from '../common/password.util';
 import { Department } from '../schemas/department.schema';
 import { Doctor } from '../schemas/doctor.schema';
 import { Project } from '../schemas/project.schema';
+import { Admin } from '../schemas/admin.schema';
 
 const COL_SUPERVISOR = 'الدكتور المشرف';
 const COL_YEAR = 'العام الدراسي';
@@ -27,8 +28,8 @@ function seedEmailForDoctor(nameKey: string, departmentId: string): string {
   const h = createHash('sha256')
     .update(`${departmentId}|${nameKey}`)
     .digest('hex')
-    .slice(0, 28);
-  return `seed.${h}@seed.local`;
+    .slice(0, 4);
+  return `doctor.${h}@seed.local`;
 }
 
 /** Co-supervisors separated by `_`, `-`, en dash, or em dash. */
@@ -56,6 +57,8 @@ export class SeedService {
     private readonly doctorModel: Model<Doctor>,
     @InjectModel(Project.name)
     private readonly projectModel: Model<Project>,
+    @InjectModel(Admin.name)
+    private readonly adminModel: Model<Admin>,
   ) {}
 
   async run(csvPath?: string): Promise<SeedResult> {
@@ -167,6 +170,7 @@ export class SeedService {
         isFinished: false,
         committees: null,
         mark: 0,
+        createdByStudent: null,
         supervisor: primarySupervisor,
         supervisors: supervisorIds,
         supervisorDisplayName: supervisorDisplay,
@@ -178,6 +182,25 @@ export class SeedService {
       `Seed done: projects=${projectsCreated}, newDoctors=${doctorsCreated}, skippedRows=${rowsSkipped}`,
     );
 
+    await this.ensureBootstrapAdmin();
+
     return { projectsCreated, doctorsCreated, rowsSkipped };
+  }
+
+  private async ensureBootstrapAdmin(): Promise<void> {
+    const email = (process.env.ADMIN_EMAIL ?? 'admin@grad.local').toLowerCase();
+    const passwordPlain = process.env.ADMIN_PASSWORD ?? 'admin123';
+    const name = process.env.ADMIN_NAME ?? 'مشرف النظام';
+
+    const exists = await this.adminModel.exists({ email });
+    if (exists) {
+      return;
+    }
+    await this.adminModel.create({
+      name,
+      email,
+      password: passwordPlain,
+    });
+    this.logger.log(`Created bootstrap admin account: ${email}`);
   }
 }

@@ -13,3 +13,5 @@ export class Blacklist {
 }
 
 export const BlacklistSchema = SchemaFactory.createForClass(Blacklist);
+
+BlacklistSchema.index({ student: 1, project: 1 }, { unique: true });
