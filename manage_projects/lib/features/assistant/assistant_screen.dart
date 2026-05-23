@@ -6,10 +6,12 @@ import 'package:provider/provider.dart';
 import '../../core/widgets/app_logo.dart';
 import '../../data/grad_hub_api.dart';
 
-const _assistantQuickPrompts = <String>[
-  'ما الفرق بين طلب الانضمام لمشروع ودعوة أستاذ للإشراف؟',
-  'كيف أعرف حالة طلباتي في التطبيق؟',
-  'نصائح لصياغة عنوان ووصف مشروع تخرّج',
+enum _AssistTab { chat, projectSearch }
+
+const _searchQuickPrompts = <String>[
+  'مشاريع عن التعلم الآلي أو الذكاء الاصطناعي',
+  'مشاريع غير منجزة',
+  'مشاريع عن الشبكات أو الأمن السيبراني',
 ];
 
 class _ChatMessage {
@@ -28,13 +30,19 @@ class AssistantScreen extends StatefulWidget {
 class _AssistantScreenState extends State<AssistantScreen> {
   final _q = TextEditingController();
   final _scroll = ScrollController();
-  final List<_ChatMessage> _messages = [];
-  String _hist = '';
+  _AssistTab _tab = _AssistTab.chat;
+  final List<_ChatMessage> _messagesChat = [];
+  final List<_ChatMessage> _messagesSearch = [];
+  String _histChat = '';
+  String _histSearch = '';
   bool _busy = false;
   String? _err;
   List<String> _models = const ['qwen2.5:7b'];
   String _selectedModel = 'qwen2.5:7b';
   bool _modelsLoading = true;
+
+  List<_ChatMessage> get _activeMessages =>
+      _tab == _AssistTab.chat ? _messagesChat : _messagesSearch;
 
   @override
   void initState() {
@@ -84,8 +92,13 @@ class _AssistantScreenState extends State<AssistantScreen> {
 
   void _clearChat() {
     setState(() {
-      _messages.clear();
-      _hist = '';
+      if (_tab == _AssistTab.chat) {
+        _messagesChat.clear();
+        _histChat = '';
+      } else {
+        _messagesSearch.clear();
+        _histSearch = '';
+      }
       _err = null;
     });
   }
@@ -98,28 +111,17 @@ class _AssistantScreenState extends State<AssistantScreen> {
     setState(() {
       _busy = true;
       _err = null;
-      _messages.add(_ChatMessage(isUser: true, text: txt));
+      _activeMessages.add(_ChatMessage(isUser: true, text: txt));
     });
     _q.clear();
     _scrollToEnd();
 
     try {
-      final resp = await context.read<GradHubApi>().aiChat(
-            query: txt,
-            conversationHistory: _hist,
-            model: _selectedModel,
-          );
-      final answer =
-          resp['answer'] ?? resp['response'] ?? resp['text'] ?? resp.toString();
-      final answerStr = answer.toString();
-      if (!mounted) {
-        return;
+      if (_tab == _AssistTab.chat) {
+        await _sendChat(txt);
+      } else {
+        await _sendProjectSearch(txt);
       }
-      setState(() {
-        _hist = '${_hist}Q: $txt\nA: $answerStr\n';
-        _messages.add(_ChatMessage(isUser: false, text: answerStr));
-      });
-      _scrollToEnd();
     } on DioException catch (e) {
       if (mounted) {
         setState(() {
@@ -136,6 +138,100 @@ class _AssistantScreenState extends State<AssistantScreen> {
       }
       _scrollToEnd();
     }
+  }
+
+  Future<void> _sendChat(String txt) async {
+    final resp = await context.read<GradHubApi>().aiChat(
+          query: txt,
+          conversationHistory: _histChat,
+          model: _selectedModel,
+        );
+    final answer = resp['message'] ??
+        resp['answer'] ??
+        resp['response'] ??
+        resp['text'] ??
+        resp.toString();
+    final answerStr = answer.toString();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _histChat = '${_histChat}Q: $txt\nA: $answerStr\n';
+      _messagesChat.add(_ChatMessage(isUser: false, text: answerStr));
+    });
+    _scrollToEnd();
+  }
+
+  Future<void> _sendProjectSearch(String userQuery) async {
+    final resp =
+        await context.read<GradHubApi>().aiVectorSearch(query: userQuery);
+    final answerStr = _formatVectorSearchMarkdown(resp);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _histSearch = '${_histSearch}Q: $userQuery\nA: $answerStr\n';
+      _messagesSearch.add(_ChatMessage(isUser: false, text: answerStr));
+    });
+    _scrollToEnd();
+  }
+
+  /// يعرّض بدون ترتيب إضافي: نفس ترتيب ‎`/api/search`‎ من الخادوم.
+  String _formatVectorSearchMarkdown(Map<String, dynamic> resp) {
+    final q = resp['query']?.toString() ?? '';
+    final resultsRaw = resp['results'];
+    if (resultsRaw is! List || resultsRaw.isEmpty) {
+      return 'لم يُعثر على نتائج قريبة للاستعلام: «${q.trim()}».';
+    }
+    final lines = <String>[
+      '**الاستعلام:** ${q.trim().isEmpty ? '—' : q.trim()}',
+      '',
+      '**عدد النتائج:** ${resp['count'] ?? resultsRaw.length}',
+      '',
+    ];
+    var i = 1;
+    for (final raw in resultsRaw) {
+      lines.add('### $i');
+      if (raw is Map) {
+        final m = Map<String, dynamic>.from(raw);
+        String? text;
+        for (final key in [
+          'page_content',
+          'pageContent',
+          'content',
+          'text',
+          'snippet'
+        ]) {
+          final t = m[key]?.toString().trim();
+          if (t != null && t.isNotEmpty) {
+            text = t;
+            break;
+          }
+        }
+        if (text != null) {
+          lines.add(text);
+        } else {
+          lines.add(_mapToReadableLines(m));
+        }
+      } else {
+        lines.add(raw.toString());
+      }
+      lines.add('');
+      i++;
+    }
+    return lines.join('\n').trimRight();
+  }
+
+  String _mapToReadableLines(Map<String, dynamic> m) {
+    final skip = {'page_content', 'pageContent'};
+    final parts = <String>[];
+    m.forEach((k, v) {
+      if (skip.contains(k) || v == null) return;
+      final s = v.toString().trim();
+      if (s.isEmpty || s == '{}') return;
+      parts.add('**$k:** $s');
+    });
+    return parts.isEmpty ? '$m'.trim() : parts.join('\n');
   }
 
   @override
@@ -163,37 +259,37 @@ class _AssistantScreenState extends State<AssistantScreen> {
           ],
         ),
         actions: [
-          if (_modelsLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: SizedBox(
-                width: 22,
-                height: 22,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            )
-          else
-            PopupMenuButton<String>(
-              tooltip: 'النموذج',
-              enabled: !_busy && _models.isNotEmpty,
-              onSelected: (v) => setState(() => _selectedModel = v),
-              itemBuilder: (ctx) => [
-                for (final m in _models)
-                  CheckedPopupMenuItem<String>(
-                    value: m,
-                    checked: m == _selectedModel,
-                    child: Text(m, overflow: TextOverflow.ellipsis),
+          if (_tab == _AssistTab.chat)
+            _modelsLoading
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : PopupMenuButton<String>(
+                    tooltip: 'النموذج',
+                    enabled: !_busy && _models.isNotEmpty,
+                    onSelected: (v) => setState(() => _selectedModel = v),
+                    itemBuilder: (ctx) => [
+                      for (final m in _models)
+                        CheckedPopupMenuItem<String>(
+                          value: m,
+                          checked: m == _selectedModel,
+                          child: Text(m, overflow: TextOverflow.ellipsis),
+                        ),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      child: Icon(
+                        Icons.memory_rounded,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
                   ),
-              ],
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Icon(
-                  Icons.memory_rounded,
-                  color: theme.colorScheme.primary,
-                ),
-              ),
-            ),
-          if (_messages.isNotEmpty)
+          if (_activeMessages.isNotEmpty)
             IconButton(
               tooltip: 'مسح المحادثة',
               onPressed: _busy ? null : _clearChat,
@@ -203,6 +299,32 @@ class _AssistantScreenState extends State<AssistantScreen> {
       ),
       body: Column(
         children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+            child: SegmentedButton<_AssistTab>(
+              segments: [
+                const ButtonSegment<_AssistTab>(
+                  value: _AssistTab.chat,
+                  label: Text('دردشة'),
+                  icon: Icon(Icons.chat_bubble_outline_rounded),
+                ),
+                const ButtonSegment<_AssistTab>(
+                  value: _AssistTab.projectSearch,
+                  label: Text('بحث مشاريع'),
+                  icon: Icon(Icons.manage_search_rounded),
+                ),
+              ],
+              selected: {_tab},
+              emptySelectionAllowed: false,
+              showSelectedIcon: false,
+              onSelectionChanged: (s) {
+                setState(() {
+                  _tab = s.first;
+                  _err = null;
+                });
+              },
+            ),
+          ),
           Expanded(
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -215,8 +337,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   ],
                 ),
               ),
-              child: _messages.isEmpty && _err == null
+              child: _activeMessages.isEmpty && _err == null
                   ? _EmptyAssistantView(
+                      tab: _tab,
                       onPick: (s) {
                         _q.text = s;
                         _send();
@@ -225,7 +348,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                   : ListView.builder(
                       controller: _scroll,
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-                      itemCount: _messages.length + (_busy ? 1 : 0) + (_err != null ? 1 : 0),
+                      itemCount: _activeMessages.length + (_busy ? 1 : 0) + (_err != null ? 1 : 0),
                       itemBuilder: (context, i) {
                         var idx = i;
                         if (_err != null) {
@@ -265,25 +388,31 @@ class _AssistantScreenState extends State<AssistantScreen> {
                           }
                           idx -= 1;
                         }
-                        if (_busy && idx == _messages.length) {
+                        if (_busy && idx == _activeMessages.length) {
                           return Align(
                             alignment: Alignment.centerLeft,
                             child: Padding(
                               padding: const EdgeInsets.only(bottom: 12),
-                              child: _TypingBubble(colorScheme: scheme),
+                              child: _TypingBubble(
+                                colorScheme: scheme,
+                                label: _tab == _AssistTab.projectSearch
+                                    ? 'جاري البحث في فهرس المشاريع…'
+                                    : 'جاري التفكير… (قد يصل الانتظار إلى عدة دقائق)',
+                              ),
                             ),
                           );
                         }
-                        if (idx >= _messages.length) {
+                        if (idx >= _activeMessages.length) {
                           return const SizedBox.shrink();
                         }
-                        final m = _messages[idx];
+                        final m = _activeMessages[idx];
                         return _MessageBubble(message: m, scheme: scheme);
                       },
                     ),
             ),
           ),
-          if (_messages.isNotEmpty || _err != null)
+          if (_tab == _AssistTab.projectSearch &&
+              (_activeMessages.isNotEmpty || _err != null))
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Align(
@@ -291,7 +420,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
                 child: Wrap(
                   spacing: 8,
                   runSpacing: 6,
-                  children: _assistantQuickPrompts
+                  children: _searchQuickPrompts
                       .map(
                         (s) => ActionChip(
                           label: Text(s, style: theme.textTheme.bodySmall),
@@ -326,7 +455,9 @@ class _AssistantScreenState extends State<AssistantScreen> {
                         textInputAction: TextInputAction.send,
                         onSubmitted: (_) => _send(),
                         decoration: InputDecoration(
-                          hintText: 'اكتب سؤالك عن المشروع أو الإجراءات…',
+                          hintText: _tab == _AssistTab.chat
+                              ? 'اكتب سؤالك عن المشروع أو الإجراءات…'
+                              : 'اكتب كلمات بحث أو وصف الموضوع (مثل: أمن معلومات، تعلّم عميق…)…',
                           filled: true,
                           fillColor: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
                           contentPadding: const EdgeInsets.symmetric(
@@ -379,14 +510,22 @@ class _AssistantScreenState extends State<AssistantScreen> {
 }
 
 class _EmptyAssistantView extends StatelessWidget {
-  const _EmptyAssistantView({required this.onPick});
+  const _EmptyAssistantView({required this.tab, required this.onPick});
 
+  final _AssistTab tab;
   final void Function(String) onPick;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isSearch = tab == _AssistTab.projectSearch;
+    final title = isSearch
+        ? 'بحث شبيه بالمشاريع (فهرس متجه)'
+        : 'مرحباً — كيف أقدر أساعدك؟';
+    final blurb = isSearch
+        ? 'يُرسَل استعلامك إلى خدمة الفهرسة على الخادوم (بدون تصنيف أو تلخيص إضافي في التطبيق). النتائج بنفس الترتيب والدرجة التي تُعيدها نقطة البحث.'
+        : 'الإجابات تُولَّد عبر الخادوم وقد تحتاج مراجعة أكاديمية. اكتب سؤالك في الحقل أسفل الشاشة.';
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
       children: [
@@ -396,7 +535,7 @@ class _EmptyAssistantView extends StatelessWidget {
               const AppLogo(size: 72, circular: true),
               const SizedBox(height: 18),
               Text(
-                'مرحباً — كيف أقدر أساعدك؟',
+                title,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.w800,
@@ -404,7 +543,7 @@ class _EmptyAssistantView extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               Text(
-                'الإجابات تُولَّد عبر الخادوم وقد تحتاج مراجعة أكاديمية. جرّب أحد الاقتراحات أو اكتب سؤالك بالأسفل.',
+                blurb,
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: scheme.onSurfaceVariant,
@@ -414,50 +553,54 @@ class _EmptyAssistantView extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 28),
-        Text(
-          'اقتراحات سريعة',
-          style: theme.textTheme.titleSmall?.copyWith(
-            fontWeight: FontWeight.w700,
+        if (isSearch) ...[
+          const SizedBox(height: 28),
+          Text(
+            'أمثلة بحث سريعة',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        ..._assistantQuickPrompts.map(
-          (s) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Material(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              elevation: 0,
-              shadowColor: Colors.transparent,
-              child: InkWell(
-                onTap: () => onPick(s),
+          const SizedBox(height: 12),
+          ..._searchQuickPrompts.map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Material(
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                child: Ink(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: scheme.primary.withValues(alpha: 0.18),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.arrow_back_ios_new_rounded, size: 16, color: scheme.primary),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          s,
-                          style: theme.textTheme.bodyMedium?.copyWith(height: 1.4),
-                        ),
+                elevation: 0,
+                shadowColor: Colors.transparent,
+                child: InkWell(
+                  onTap: () => onPick(s),
+                  borderRadius: BorderRadius.circular(16),
+                  child: Ink(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: scheme.primary.withValues(alpha: 0.18),
                       ),
-                    ],
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(Icons.arrow_back_ios_new_rounded,
+                            size: 16, color: scheme.primary),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Text(
+                            s,
+                            style:
+                                theme.textTheme.bodyMedium?.copyWith(height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -496,7 +639,7 @@ class _MessageBubble extends StatelessWidget {
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
-        padding: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.only(bottom: 10),
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: MediaQuery.sizeOf(context).width * 0.88,
@@ -540,9 +683,13 @@ class _MessageBubble extends StatelessWidget {
 }
 
 class _TypingBubble extends StatefulWidget {
-  const _TypingBubble({required this.colorScheme});
+  const _TypingBubble({
+    required this.colorScheme,
+    required this.label,
+  });
 
   final ColorScheme colorScheme;
+  final String label;
 
   @override
   State<_TypingBubble> createState() => _TypingBubbleState();
@@ -588,7 +735,7 @@ class _TypingBubbleState extends State<_TypingBubble>
               builder: (context, _) {
                 final o = 0.35 + 0.65 * (0.5 + 0.5 * (1 - (_c.value * 2 - 1).abs()));
                 return Text(
-                  'جاري التفكير… (قد يصل الانتظار إلى عدة دقائق)',
+                  widget.label,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant.withValues(alpha: o),
                         fontWeight: FontWeight.w600,

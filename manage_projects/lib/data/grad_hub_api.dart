@@ -304,6 +304,26 @@ class GradHubApi {
     return r.data!;
   }
 
+  /// بحث شبيه في فهرس المشاريع المتجهّ (FastAPI ‎`/api/search`‎ عبر Nest).
+  Future<Map<String, dynamic>> aiVectorSearch({
+    required String query,
+    int k = 5,
+  }) async {
+    final kClamped = k < 1 ? 1 : (k > 10 ? 10 : k);
+    final r = await _dio.post<Map<String, dynamic>>(
+      '/integrations/ai/search',
+      data: {
+        'query': query,
+        'k': kClamped,
+      },
+      options: Options(
+        receiveTimeout: const Duration(seconds: 120),
+        sendTimeout: const Duration(seconds: 60),
+      ),
+    );
+    return r.data!;
+  }
+
   /// أسماء النماذج المتاحة (من الخادوم أو احتياطيًا من Ollama عبر Nest).
   Future<List<String>> aiChatModels() async {
     final r = await _dio.get<Map<String, dynamic>>('/integrations/ai/models');

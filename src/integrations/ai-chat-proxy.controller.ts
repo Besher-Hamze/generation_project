@@ -21,6 +21,10 @@ export type AiChatBody = {
   model?: string;
 };
 
+export type AiSearchRequest = {
+  query: string;
+  k?: number;
+};
 const DEFAULT_MODEL = 'qwen2.5:7b';
 const DEFAULT_CHAT_TIMEOUT_MS = Number(
   process.env.AI_CHAT_TIMEOUT_MS ?? 330_000,
@@ -127,6 +131,41 @@ export class AiChatProxyController {
             timeout: DEFAULT_CHAT_TIMEOUT_MS,
           },
         ),
+      );
+      return data;
+    } catch (err: unknown) {
+      this.logger.warn(`AI proxy failed: ${String(err)}`);
+      throw new HttpException(
+        'تعذر الاتصال بخدمة الذكاء الاصطناعي. تأكد من تشغيل FastAPI وOllama.',
+        HttpStatus.BAD_GATEWAY,
+      );
+    }
+  }
+
+
+  @Post('search')
+  async search(@Body() body: AiSearchRequest) {
+    const query = body?.query?.trim();
+    if (!query) {
+      throw new HttpException('query is required', HttpStatus.BAD_REQUEST);
+    }
+
+    const base = aiServiceBase();
+    const payload: { query: string; k?: number } = { query };
+    if (typeof body?.k === 'number' && Number.isFinite(body.k)) {
+      payload.k = Math.min(10, Math.max(1, Math.floor(body.k)));
+    }
+
+    try {
+      const { data } = await firstValueFrom(
+        this.http.post<{
+          query?: string;
+          count?: number;
+          results?: unknown[];
+        }>(`${base}/api/search`, payload, {
+          headers: { 'Content-Type': 'application/json' },
+          timeout: Math.min(DEFAULT_CHAT_TIMEOUT_MS, 120_000),
+        }),
       );
       return data;
     } catch (err: unknown) {
