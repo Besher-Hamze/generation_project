@@ -5,7 +5,10 @@ import { AiChatProxyController } from './ai-chat-proxy.controller';
 @Module({
   imports: [
     HttpModule.register({
-      timeout: Number(process.env.AI_CHAT_TIMEOUT_MS ?? 120_000),
+      timeout: Math.max(
+        Number(process.env.AI_CHAT_TIMEOUT_MS ?? 330_000),
+        330_000,
+      ),
       maxRedirects: 3,
     }),
   ],

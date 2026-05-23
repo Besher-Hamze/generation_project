@@ -32,6 +32,35 @@ class _AssistantScreenState extends State<AssistantScreen> {
   String _hist = '';
   bool _busy = false;
   String? _err;
+  List<String> _models = const ['qwen2.5:7b'];
+  String _selectedModel = 'qwen2.5:7b';
+  bool _modelsLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadModels());
+  }
+
+  Future<void> _loadModels() async {
+    try {
+      final list = await context.read<GradHubApi>().aiChatModels();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _models = list.isEmpty ? const ['qwen2.5:7b'] : list;
+        if (!_models.contains(_selectedModel)) {
+          _selectedModel = _models.first;
+        }
+        _modelsLoading = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _modelsLoading = false);
+      }
+    }
+  }
 
   @override
   void dispose() {
@@ -78,6 +107,7 @@ class _AssistantScreenState extends State<AssistantScreen> {
       final resp = await context.read<GradHubApi>().aiChat(
             query: txt,
             conversationHistory: _hist,
+            model: _selectedModel,
           );
       final answer =
           resp['answer'] ?? resp['response'] ?? resp['text'] ?? resp.toString();
@@ -133,6 +163,36 @@ class _AssistantScreenState extends State<AssistantScreen> {
           ],
         ),
         actions: [
+          if (_modelsLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else
+            PopupMenuButton<String>(
+              tooltip: 'النموذج',
+              enabled: !_busy && _models.isNotEmpty,
+              onSelected: (v) => setState(() => _selectedModel = v),
+              itemBuilder: (ctx) => [
+                for (final m in _models)
+                  CheckedPopupMenuItem<String>(
+                    value: m,
+                    checked: m == _selectedModel,
+                    child: Text(m, overflow: TextOverflow.ellipsis),
+                  ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Icon(
+                  Icons.memory_rounded,
+                  color: theme.colorScheme.primary,
+                ),
+              ),
+            ),
           if (_messages.isNotEmpty)
             IconButton(
               tooltip: 'مسح المحادثة',
@@ -528,7 +588,7 @@ class _TypingBubbleState extends State<_TypingBubble>
               builder: (context, _) {
                 final o = 0.35 + 0.65 * (0.5 + 0.5 * (1 - (_c.value * 2 - 1).abs()));
                 return Text(
-                  'جاري التفكير…',
+                  'جاري التفكير… (قد يصل الانتظار إلى عدة دقائق)',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant.withValues(alpha: o),
                         fontWeight: FontWeight.w600,

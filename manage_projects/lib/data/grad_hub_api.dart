@@ -283,6 +283,7 @@ class GradHubApi {
     return Map<String, dynamic>.from(r.data ?? {});
   }
 
+  /// انتظار الاستلام يُزاد هنا حتى لا يقطع Dio قبل انتهاء توليد نموذج بطيء (حتى نحو ‎۶‎ دقيقة).
   Future<Map<String, dynamic>> aiChat({
     required String query,
     String conversationHistory = '',
@@ -295,8 +296,30 @@ class GradHubApi {
         'conversation_history': conversationHistory,
         'model': model,
       },
+      options: Options(
+        receiveTimeout: const Duration(seconds: 360),
+        sendTimeout: const Duration(seconds: 60),
+      ),
     );
     return r.data!;
+  }
+
+  /// أسماء النماذج المتاحة (من الخادوم أو احتياطيًا من Ollama عبر Nest).
+  Future<List<String>> aiChatModels() async {
+    final r = await _dio.get<Map<String, dynamic>>('/integrations/ai/models');
+    final data = r.data;
+    if (data == null) {
+      return const ['qwen2.5:7b'];
+    }
+    final raw = data['models'];
+    if (raw is! List) {
+      return const ['qwen2.5:7b'];
+    }
+    final names = raw
+        .map((e) => e?.toString().trim() ?? '')
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return names.isEmpty ? const ['qwen2.5:7b'] : names;
   }
 
   Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> data) async {

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_logo.dart';
+import '../../data/grad_hub_api.dart';
 import '../../providers/auth_provider.dart';
 import 'register_screen.dart';
 
@@ -159,9 +160,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           const SizedBox(height: 12),
                           TextButton(
                             onPressed: () {
+                              final api = context.read<GradHubApi>();
+                              final auth = context.read<AuthProvider>();
                               Navigator.of(context).push<void>(
-                                MaterialPageRoute(
-                                  builder: (_) => const RegisterScreen(),
+                                MaterialPageRoute<void>(
+                                  builder: (_) => RegisterScreen(
+                                    api: api,
+                                    auth: auth,
+                                  ),
                                 ),
                               );
                             },

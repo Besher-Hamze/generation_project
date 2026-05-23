@@ -8,7 +8,7 @@ import 'package:manage_projects/providers/auth_provider.dart';
 
 void main() {
   testWidgets('Auth gate shows splash while bootstrapping', (tester) async {
-    final dio = createDio();
+    final dio = createDioForHost('127.0.0.1');
     final api = GradHubApi(dio);
     final auth = AuthProvider(api, dio);
     await tester.pumpWidget(

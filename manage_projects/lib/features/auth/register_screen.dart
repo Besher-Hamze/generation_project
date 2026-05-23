@@ -1,13 +1,19 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../data/grad_hub_api.dart';
 import '../../providers/auth_provider.dart';
 
 class RegisterScreen extends StatefulWidget {
-  const RegisterScreen({super.key});
+  const RegisterScreen({
+    super.key,
+    required this.api,
+    required this.auth,
+  });
+
+  final GradHubApi api;
+  final AuthProvider auth;
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -42,8 +48,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _loadPublic() async {
     setState(() => _loading = true);
     try {
-      final api = context.read<GradHubApi>();
-      final d = await api.publicDepartments();
+      final d = await widget.api.publicDepartments();
       setState(() {
         _depts = d;
         _loading = false;
@@ -66,15 +71,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _err = null;
     });
     try {
-      final api = context.read<GradHubApi>();
-      final auth = context.read<AuthProvider>();
-      final body = await api.studentRegister({
+      final body = await widget.api.studentRegister({
         'uniNumber': _uni.text.trim(),
         'name': _name.text.trim(),
         'password': _pass.text,
         'department': _dept!,
       });
-      await auth.persistFromRegistration(body);
+      await widget.auth.persistFromRegistration(body);
       if (mounted) {
         Navigator.of(context).pop();
       }
